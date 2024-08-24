@@ -13,7 +13,6 @@ import org.jfree.ui.ApplicationFrame;
 import org.jfree.ui.RefineryUtilities;
 import org.oristool.math.OmegaBigDecimal;
 import org.oristool.math.expression.Variable;
-import org.oristool.math.function.Erlang;
 import org.oristool.math.function.GEN;
 
 import javax.swing.*;
@@ -24,12 +23,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class ErlangPlot extends ApplicationFrame {
+public class MonovariatePlot extends ApplicationFrame {
 
-    public ErlangPlot(String title, double[] samples, Erlang erlang, boolean includeProposal, int nHits, int nMisses) { // For the MH plot
+    public MonovariatePlot(String title, double[] samples, GEN genFunction, boolean includeProposal, int nHits, int nMisses) { // For the MH plot
         super(title);
         JFreeChart histogram = createHistogramChart(createDataset(samples), nHits, nMisses);
-        JFreeChart pdfChart = createPDFChart(erlang, includeProposal, null, 0);
+        JFreeChart pdfChart = createPDFChart(genFunction, includeProposal, null, 0);
 
         ChartPanel histogramPanel = new ChartPanel(histogram);
         histogramPanel.setPreferredSize(new java.awt.Dimension(800, 400));
@@ -43,11 +42,11 @@ public class ErlangPlot extends ApplicationFrame {
         setContentPane(panel);
     }
 
-    public ErlangPlot(String title, double[] samples, Erlang erlang, boolean includeProposal, GEN uniformProposal, double c, int nHits, int nMisses) { // For the AR plot
+    public MonovariatePlot(String title, double[] samples, GEN genFunction, boolean includeProposal, GEN uniformProposal, double c, int nHits, int nMisses) { // For the AR plot
         super(title);
 
         JFreeChart histogram = createHistogramChart(createDataset(samples), nHits, nMisses);
-        JFreeChart pdfChart = createPDFChart(erlang, includeProposal, uniformProposal, c);
+        JFreeChart pdfChart = createPDFChart(genFunction, includeProposal, uniformProposal, c);
 
         ChartPanel histogramPanel = new ChartPanel(histogram);
         histogramPanel.setPreferredSize(new java.awt.Dimension(800, 400));
@@ -57,6 +56,19 @@ public class ErlangPlot extends ApplicationFrame {
         JPanel panel = new JPanel(new GridLayout(2, 1));
         panel.add(histogramPanel);
         panel.add(pdfPanel);
+
+        setContentPane(panel);
+    }
+
+    public MonovariatePlot(String title, GEN genFunction) {
+        super(title);
+        JFreeChart pdfChart = createPDFChart(genFunction, false, null, 0);
+
+        ChartPanel pdfPanel = new ChartPanel(pdfChart);
+        pdfPanel.setPreferredSize(new java.awt.Dimension(800, 400));
+
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(pdfPanel, BorderLayout.CENTER);
 
         setContentPane(panel);
     }
@@ -84,18 +96,18 @@ public class ErlangPlot extends ApplicationFrame {
         xAxis.setRange(0, 50);
 
         // Add hits, misses, and efficiency to the chart title
-        String chartTitle = String.format("Histogram of Samples (Hits: %d, Misses: %d, Efficiency: %.2f%%)",nHits, nMisses, ((float)nHits/ (nHits+(float)nMisses))*100);
+        String chartTitle = String.format("Histogram of Samples (Hits: %d, Misses: %d, Efficiency: %.2f%%)", nHits, nMisses, ((float) nHits / (nHits + (float) nMisses)) * 100);
         histogramChart.setTitle(chartTitle);
 
         return histogramChart;
     }
 
-    private JFreeChart createPDFChart(Erlang erlang, boolean includeProposal, GEN uniformProposal, double c) {
+    private JFreeChart createPDFChart(GEN genFunction, boolean includeProposal, GEN uniformProposal, double c) {
         JFreeChart pdfChart = ChartFactory.createXYLineChart(
-                "Erlang PDF",
+                "PDF",
                 "x",
                 "Probability Density",
-                createPDFDataset(erlang, includeProposal, uniformProposal, c),
+                createPDFDataset(genFunction, includeProposal, uniformProposal, c),
                 PlotOrientation.VERTICAL,
                 true,
                 true,
@@ -109,29 +121,31 @@ public class ErlangPlot extends ApplicationFrame {
         return pdfChart;
     }
 
-    private XYSeriesCollection createPDFDataset(Erlang erlang, boolean includeProposal, GEN uniformProposal, double c) {
-        XYSeries erlangSeries = new XYSeries("Erlang PDF");
+    private XYSeriesCollection createPDFDataset(GEN genFunction, boolean includeProposal, GEN uniformProposal, double c) {
+        XYSeries pdfSeries = new XYSeries("PDF");
         XYSeries proposalSeries = new XYSeries("Proposal Distribution");
 
-        double start = 0;
-        double end = 50;
-        int numPoints = 10000;
+        double start = genFunction.getDomainsEFT().doubleValue();
+        double end = genFunction.getDomainsLFT().doubleValue();
+        if (end == OmegaBigDecimal.POSITIVE_INFINITY.doubleValue())
+            end = 50;
+        int numPoints = 1000;
         double step = (end - start) / numPoints;
 
         for (double x = start; x <= end; x += step) {
-            double pdfValue = calculateErlangPDF(erlang, x);
-            erlangSeries.add(x, pdfValue);
+            double pdfValue = calculatePDF(genFunction, x);
+            pdfSeries.add(x, pdfValue);
         }
 
         if (includeProposal) {
-            for (double x = uniformProposal.getDomainsEFT().doubleValue(); x <= uniformProposal.getDomainsLFT().doubleValue(); x += step){
+            for (double x = uniformProposal.getDomainsEFT().doubleValue(); x <= uniformProposal.getDomainsLFT().doubleValue(); x += step) {
                 double proposalValue = calculateProposalPDF(x, uniformProposal, c);
                 proposalSeries.add(x, proposalValue);
             }
         }
 
         XYSeriesCollection dataset = new XYSeriesCollection();
-        dataset.addSeries(erlangSeries);
+        dataset.addSeries(pdfSeries);
         if (includeProposal) {
             dataset.addSeries(proposalSeries);
         }
@@ -139,10 +153,12 @@ public class ErlangPlot extends ApplicationFrame {
         return dataset;
     }
 
-    private double calculateErlangPDF(Erlang erlang, double x) {
+    private double calculatePDF(GEN genFunction, double x) {
+        Variable[] vars = genFunction.getDomain().getVariables().toArray(new Variable[0]);
+        Variable variable = vars[1];
         Map<Variable, OmegaBigDecimal> variableMap = new HashMap<>();
-        variableMap.put(erlang.getVariable(), new OmegaBigDecimal(new BigDecimal(x, MathContext.DECIMAL128)));
-        OmegaBigDecimal pdfValue = erlang.getDensity().evaluate(variableMap);
+        variableMap.put(variable, new OmegaBigDecimal(new BigDecimal(x, MathContext.DECIMAL128)));
+        OmegaBigDecimal pdfValue = genFunction.getDensity().evaluate(variableMap);
         return pdfValue.doubleValue();
     }
 
@@ -160,27 +176,33 @@ public class ErlangPlot extends ApplicationFrame {
         return proposalDensityValue.doubleValue() * c;
     }
 
-    public static void plotCharts(double[] samples, Erlang erlang, int nHits, int nMisses) {
-        ErlangPlot chart = new ErlangPlot("Metropolis-Hastings and Erlang PDF", samples, erlang, false, nHits, nMisses);
+    public static void plotCharts(double[] samples, GEN genFunction, int nHits, int nMisses) {
+        MonovariatePlot chart = new MonovariatePlot("Metropolis-Hastings and PDF", samples, genFunction, false, nHits, nMisses);
         chart.pack();
         RefineryUtilities.centerFrameOnScreen(chart);
         chart.setVisible(true);
     }
 
-    public static void plotAcceptanceRejectionCharts(List<Double> samples, Erlang erlang, GEN uniformProposal, double c, int nHits, int nMisses) {
+    public static void plotCharts(GEN genFunction) {
+        MonovariatePlot chart = new MonovariatePlot("Metropolis-Hastings and PDF", genFunction);
+        chart.pack();
+        RefineryUtilities.centerFrameOnScreen(chart);
+        chart.setVisible(true);
+    }
+
+    public static void plotAcceptanceRejectionCharts(List<Double> samples, GEN genFunction, GEN uniformProposal, double c, int nHits, int nMisses) {
         double[] arSample = new double[samples.size()];
         for (int i = 0; i < samples.size(); i++) {
             arSample[i] = samples.get(i);
         }
-        ErlangPlot chart = new ErlangPlot("Acceptance-Rejection and Erlang PDF", arSample, erlang, true, uniformProposal, c, nHits, nMisses);
+        MonovariatePlot chart = new MonovariatePlot("Acceptance-Rejection and PDF", arSample, genFunction, true, uniformProposal, c, nHits, nMisses);
         chart.pack();
         RefineryUtilities.centerFrameOnScreen(chart);
         chart.setVisible(true);
     }
 
-    public static void plotSumOfExponentialsCharts(double[] samples, Erlang erlang) {
-        // TODO: I don't really like these useless 0s. Check again the way you eluded the lack of default parameters in java
-        ErlangPlot chart = new ErlangPlot("Sum of Exponentials and Erlang PDF", samples, erlang, false, 0, 0);
+    public static void plotSumOfExponentialsCharts(double[] samples, GEN genFunction) {
+        MonovariatePlot chart = new MonovariatePlot("Sum of Exponentials and PDF", samples, genFunction, false, 0, 0);
         chart.pack();
         RefineryUtilities.centerFrameOnScreen(chart);
         chart.setVisible(true);
