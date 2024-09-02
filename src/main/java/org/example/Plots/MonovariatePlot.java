@@ -14,6 +14,7 @@ import org.jfree.ui.RefineryUtilities;
 import org.oristool.math.OmegaBigDecimal;
 import org.oristool.math.expression.Variable;
 import org.oristool.math.function.GEN;
+import org.oristool.math.function.PartitionedGEN;
 
 import javax.swing.*;
 import java.awt.*;
@@ -24,6 +25,24 @@ import java.util.List;
 import java.util.Map;
 
 public class MonovariatePlot extends ApplicationFrame {
+
+    public MonovariatePlot(String title, double[] samples, GEN genFunction, PartitionedGEN piecewiseProposal, double c, int nHits, int nMisses) {
+        super(title);
+
+        JFreeChart histogram = createHistogramChart(createDataset(samples), nHits, nMisses);
+        JFreeChart pdfChart = createPiecewisePDFChart(genFunction, piecewiseProposal, c);
+
+        ChartPanel histogramPanel = new ChartPanel(histogram);
+        histogramPanel.setPreferredSize(new java.awt.Dimension(800, 400));
+        ChartPanel pdfPanel = new ChartPanel(pdfChart);
+        pdfPanel.setPreferredSize(new java.awt.Dimension(800, 400));
+
+        JPanel panel = new JPanel(new GridLayout(2, 1));
+        panel.add(histogramPanel);
+        panel.add(pdfPanel);
+
+        setContentPane(panel);
+    }
 
     public MonovariatePlot(String title, double[] samples, GEN genFunction, boolean includeProposal, int nHits, int nMisses) { // For the MH plot
         super(title);
@@ -129,7 +148,7 @@ public class MonovariatePlot extends ApplicationFrame {
         double end = genFunction.getDomainsLFT().doubleValue();
         if (end == OmegaBigDecimal.POSITIVE_INFINITY.doubleValue())
             end = 50;
-        int numPoints = 1000;
+        int numPoints = 10000;
         double step = (end - start) / numPoints;
 
         for (double x = start; x <= end; x += step) {
@@ -148,6 +167,67 @@ public class MonovariatePlot extends ApplicationFrame {
         dataset.addSeries(pdfSeries);
         if (includeProposal) {
             dataset.addSeries(proposalSeries);
+        }
+
+        return dataset;
+    }
+
+    private JFreeChart createPiecewisePDFChart(GEN genFunction, PartitionedGEN piecewiseProposal, double c) {
+        JFreeChart pdfChart = ChartFactory.createXYLineChart(
+                "PDF with Piecewise Proposal",
+                "x",
+                "Probability Density",
+                createPiecewisePDFDataset(genFunction, piecewiseProposal, c),
+                PlotOrientation.VERTICAL,
+                true,
+                true,
+                false
+        );
+
+        XYPlot plot = (XYPlot) pdfChart.getPlot();
+        NumberAxis xAxis = (NumberAxis) plot.getDomainAxis();
+        xAxis.setRange(0, 50);
+
+        // Set a single color for the combined piecewise series
+        plot.getRenderer().setSeriesPaint(1, Color.BLUE); // Assuming the piecewise proposal is the second series
+
+        return pdfChart;
+    }
+
+    private XYSeriesCollection createPiecewisePDFDataset(GEN genFunction, PartitionedGEN piecewiseProposal, double c) {
+        XYSeries pdfSeries = new XYSeries("PDF");
+        XYSeries proposalSeries = new XYSeries("Piecewise Proposal");
+
+        double start = genFunction.getDomainsEFT().doubleValue();
+        double end = genFunction.getDomainsLFT().doubleValue();
+        if (end == OmegaBigDecimal.POSITIVE_INFINITY.doubleValue()) end = 50;
+        int numPoints = 10000;
+        double step = (end - start) / numPoints;
+
+        // Create PDF series
+        for (double x = start; x <= end; x += step) {
+            double pdfValue = calculatePDF(genFunction, x);
+            pdfSeries.add(x, pdfValue);
+        }
+
+        // Combine proposal series into one
+        if (piecewiseProposal != null) {
+            for (GEN piece : piecewiseProposal.getFunctions()) {
+                double pieceStart = piece.getDomainsEFT().doubleValue();
+                double pieceEnd = piece.getDomainsLFT().doubleValue();
+                if (pieceEnd == OmegaBigDecimal.POSITIVE_INFINITY.doubleValue()) pieceEnd = 50;
+
+                for (double x = pieceStart; x <= pieceEnd; x += step) {
+                    double proposalValue = calculateProposalPDF(x, piece, c);
+                    proposalSeries.add(x, proposalValue);
+                }
+            }
+        }
+
+        XYSeriesCollection dataset = new XYSeriesCollection();
+        dataset.addSeries(pdfSeries);
+        if (piecewiseProposal != null) {
+            dataset.addSeries(proposalSeries); // Add the combined series to the dataset
         }
 
         return dataset;
@@ -176,6 +256,7 @@ public class MonovariatePlot extends ApplicationFrame {
         return proposalDensityValue.doubleValue() * c;
     }
 
+
     public static void plotCharts(double[] samples, GEN genFunction, int nHits, int nMisses) {
         MonovariatePlot chart = new MonovariatePlot("Metropolis-Hastings and PDF", samples, genFunction, false, nHits, nMisses);
         chart.pack();
@@ -203,6 +284,17 @@ public class MonovariatePlot extends ApplicationFrame {
 
     public static void plotSumOfExponentialsCharts(double[] samples, GEN genFunction) {
         MonovariatePlot chart = new MonovariatePlot("Sum of Exponentials and PDF", samples, genFunction, false, 0, 0);
+        chart.pack();
+        RefineryUtilities.centerFrameOnScreen(chart);
+        chart.setVisible(true);
+    }
+
+    public static void plotPiecewiseAcceptanceRejectionCharts(List<Double> samples, GEN genFunction, PartitionedGEN piecewiseProposal, double c, int nHits, int nMisses) {
+        double[] arSample = new double[samples.size()];
+        for (int i = 0; i < samples.size(); i++) {
+            arSample[i] = samples.get(i);
+        }
+        MonovariatePlot chart = new MonovariatePlot("Acceptance-Rejection with Piecewise Proposal", arSample, genFunction, piecewiseProposal, c, nHits, nMisses);
         chart.pack();
         RefineryUtilities.centerFrameOnScreen(chart);
         chart.setVisible(true);
